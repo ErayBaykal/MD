@@ -151,7 +151,7 @@ for step in ProgressIter(range(steps)):
 #updating the state for as many steps as defined
 
 plt.subplot(1, 2, 2)
-draw_system(state, box_size, 100.0)
+draw_system(state.position, box_size, 100.0)
 finalize_plot((1.5, 0.75))
 print(state.position)
 #plotting the final state
