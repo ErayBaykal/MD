@@ -105,7 +105,6 @@ def square_lattice(N, box_size):
       R.append([i * length_scale, j * length_scale])
   return np.array(R)
 
-
 #Ag simulation code
 
 from jax_md import quantity
@@ -119,7 +118,7 @@ pairwise = energy.load_lammps_eam_parameters(file)[2]
 #the function from Ag.eam.alloy that outputs the pairwise energies between particles
 
 steps = 1000
-dt = 10000
+dt = 0.1
 temperature = 293
 N = 100
 dim = 2
@@ -140,9 +139,9 @@ plt.subplot(1, 2, 1)
 draw_system(R, box_size, 100.0)
 #plotting the initial condition
 
-init_fn, apply_fn = minimize.nvt_nose_hoover(energy, shift, dt, temperature)
+init_fn, apply_fn = simulate.nvt_nose_hoover(energy, shift, dt, temperature)
 apply_fn = jit(apply_fn)
-state = init_fn(R)
+state = init_fn(key, R)
 print(energy(state.position))
 #setting up and initializing the NVT simulation
 
