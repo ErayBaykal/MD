@@ -1,0 +1,158 @@
+!pip install -q git+https://www.github.com/google/jax-md
+
+#code from cookbook to plot the particles
+
+import time 
+
+from functools import partial
+import numpy as onp
+
+import jax.numpy as np
+
+from jax import jit
+from jax import grad
+from jax import vmap
+from jax import value_and_grad
+
+from jax import random
+from jax import lax
+
+#from jax.experimental import stax
+#from jax.experimental import optimizers
+
+from jax.config import config
+config.update('jax_enable_x64', True)
+
+# NOTE(schsam): We need this in OSS I think.
+from IPython.display import HTML, display
+import time
+
+def ProgressIter(iter_fun, iter_len=0):
+  if not iter_len:
+    iter_len = len(iter_fun)
+  out = display(progress(0, iter_len), display_id=True)
+  for i, it in enumerate(iter_fun):
+    yield it
+    out.update(progress(i + 1, iter_len))
+
+def progress(value, max):
+    return HTML("""
+        <progress
+            value='{value}'
+            max='{max}',
+            style='width: 45%'
+        >
+            {value}
+        </progress>
+    """.format(value=value, max=max))
+
+import matplotlib
+import matplotlib.pyplot as plt
+import seaborn as sns
+  
+sns.set_style(style='white')
+sns.set(font_scale=1.6)
+
+def format_plot(x, y):  
+  plt.xlabel(x, fontsize=20)
+  plt.ylabel(y, fontsize=20)
+  
+def finalize_plot(shape=(1, 1)):
+  plt.gcf().set_size_inches(
+    shape[0] * 1.5 * plt.gcf().get_size_inches()[1], 
+    shape[1] * 1.5 * plt.gcf().get_size_inches()[1])
+  plt.tight_layout()
+
+f32 = np.float32
+f64 = np.float64
+
+def draw_system(R, box_size, marker_size, color=None):
+  if color == None:
+    color = [64 / 256] * 3
+  ms = marker_size / box_size
+
+  R = onp.array(R)
+
+  marker_style = dict(
+      linestyle='none', 
+      markeredgewidth=3,
+      marker='o', 
+      markersize=ms, 
+      color=color, 
+      fillstyle='none')
+
+  plt.plot(R[:, 0], R[:, 1], **marker_style)
+  plt.plot(R[:, 0] + box_size, R[:, 1], **marker_style)
+  plt.plot(R[:, 0], R[:, 1] + box_size, **marker_style)
+  plt.plot(R[:, 0] + box_size, R[:, 1] + box_size, **marker_style)
+  plt.plot(R[:, 0] - box_size, R[:, 1], **marker_style)
+  plt.plot(R[:, 0], R[:, 1] - box_size, **marker_style)
+  plt.plot(R[:, 0] - box_size, R[:, 1] - box_size, **marker_style)
+
+  plt.xlim([0, box_size])
+  plt.ylim([0, box_size])
+  #plt.axis('off')
+
+def square_lattice(N, box_size):
+  Nx = int(np.sqrt(N))
+  Ny, ragged = divmod(N, Nx)
+  if Ny != Nx or ragged:
+    assert ValueError('Particle count should be a square. Found {}.'.format(N))
+  length_scale = box_size / Nx
+  R = []
+  for i in range(Nx):
+    for j in range(Ny):
+      R.append([i * length_scale, j * length_scale])
+  return np.array(R)
+
+
+#Ag simulation code
+
+from jax_md import quantity
+from jax_md import energy
+from jax_md import simulate
+from jax_md import space
+from jax_md import minimize
+
+file = open("Ag.eam.alloy")
+pairwise = energy.load_lammps_eam_parameters(file)[2]
+#the function from Ag.eam.alloy that outputs the pairwise energies between particles
+
+steps = 1000
+dt = 10000
+temperature = 293
+N = 100
+dim = 2
+box_size = quantity.box_size_at_number_density(N, 1, dim)
+key = random.PRNGKey(0)
+
+R = random.uniform(key, (N, dim), maxval = box_size)
+displacement, shift = space.periodic(box_size)
+#defined constants and initial boundary conditions
+
+metric = space.map_product(space.metric(displacement))
+def energy(x):
+  dr = metric(x,x)
+  return 0.5*np.sum(pairwise(dr))
+#function that returns the total energy in a system using teh pairwise energies from earlier
+
+plt.subplot(1, 2, 1)
+draw_system(R, box_size, 100.0)
+#plotting the initial condition
+
+init_fn, apply_fn = minimize.nvt_nose_hoover(energy, shift, dt, temperature)
+apply_fn = jit(apply_fn)
+state = init_fn(R)
+print(energy(state.position))
+#setting up and initializing the NVT simulation
+
+for step in ProgressIter(range(steps)):
+  state = apply_fn(state)
+  print(energy(state.position))
+#updating the state for as many steps as defined
+
+plt.subplot(1, 2, 2)
+draw_system(state, box_size, 100.0)
+finalize_plot((1.5, 0.75))
+print(state.position)
+#plotting the final state
