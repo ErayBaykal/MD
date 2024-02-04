@@ -1,6 +1,7 @@
 LAMMPS setfl format.  Conversion by C. A. Becker from Y. Mishin files.  
 
-
+4 February 2009.  http://www.ctcms.nist.gov/potentials                  
+            1 Ag  
 10000   0.6941233999999998E-03   10000  0.5995011000293093E-03  0.5995011000293092E+01
    47    0.1078680000E+03    0.4090000000E+01      fcc                                                                     
   -0.2615274813030921E-07
