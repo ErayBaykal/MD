@@ -9,9 +9,9 @@ h = 10
 Tsur = 296
 
 rho = 0.001 #resistivity of SiC
-Do = 0.014
-Di = 0.01
-L1 = 0.051
+Do = 0.014 #OD of SiC
+Di = 0.01 #ID of SiC
+L1 = 0.051 #length of SiC
 k1 = 490 #SiC thermal conductivity
 e = 0.9 #emmissivity
 
