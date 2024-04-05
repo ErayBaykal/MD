@@ -6,6 +6,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
+import jax
+import jax.numpy as jnp
+
 
 
 fig, axs = plt.subplots(2)
@@ -23,10 +26,20 @@ for i in range(len(T_rho)-4):
 
 T_temp.append(3655)
 
-T_c = np.polyfit(T_temp, T_rho, 2)
-T_fit = np.polyval(T_c, T_temp)
+def quadratic_model(x, C, D, E):
+    return C + D*x + E*(x**2)
 
-axs[0].plot(T_temp, T_fit, color='orange', label='Fit Line')
+popt, _ = curve_fit(quadratic_model, jnp.array(T_temp), np.array(T_rho))
+best_fit = quadratic_model(jnp.array(T_temp), *popt)
+
+C = popt[0]
+D = popt[1]
+E = popt[2]
+
+#T_c = np.polyfit(T_temp, T_rho, 2)
+#T_fit = np.polyval(T_c, T_temp)
+
+axs[0].plot(T_temp, best_fit, color='orange', label='Fit Line')
 axs[0].scatter(T_temp,T_rho)
 axs[0].set_ylabel('Rho Tungsten (Ohm-m)')
 axs[0].set_xlabel('Temperature (K)')
@@ -39,7 +52,7 @@ low = 0.01e-2
 SiC_rho = [897, 843, 761, 707, 667, 635, 567, 529, 495, 462, 410, 398,407, 388, 316, 295, 163, 145, 122, 102, 77, 54]
 SiC_temp = [166, 173, 192, 202, 216, 224, 258, 268, 274, 286, 296, 302, 312, 316, 318, 346, 365, 382, 392, 406, 432, 454]
 
-AL = np.pi*(0.014**2 - 0.01**2)/(4*0.051)
+AL = jnp.pi*(0.014**2 - 0.01**2)/(4*0.051)
 
 SiC_rho = [rho * AL for rho in SiC_rho]
 SiC_temp = [temp + 273 for temp in SiC_temp]
@@ -50,8 +63,8 @@ SiC_temp.append(1273)
 def inverse_model(x, A,B):
     return A/x**B
 
-popt, _ = curve_fit(inverse_model, np.array(SiC_temp), np.array(SiC_rho))
-best_fit = inverse_model(np.array(SiC_temp), *popt)
+popt, _ = curve_fit(inverse_model, jnp.array(SiC_temp), np.array(SiC_rho))
+best_fit = inverse_model(jnp.array(SiC_temp), *popt)
 
 A = popt[0]
 B = popt[1]
@@ -61,7 +74,6 @@ axs[1].scatter(SiC_temp,SiC_rho)
 axs[1].set_ylabel('Rho SiC (Ohm-m)')
 axs[1].set_xlabel('Temperature (K)')
 
-
 class heater:
   def __init__(self, name, inner, outer, length):
       self.name = name
@@ -70,17 +82,17 @@ class heater:
       self.length = length
 
   def CA(self):
-      return np.pi*(self.outer**2 - self.inner**2)/4
+      return jnp.pi*(self.outer**2 - self.inner**2)/4
 
   def SA(self):
-      return np.pi*self.outer*self.length
+      return jnp.pi*self.outer*self.length
 
   def V(self):
       return self.CA()*self.length
    
   def R(self, temperature):
       if self.name == "W":
-        rho = np.polyval(T_c, temperature)
+        rho = quadratic_model(temperature, C, D,E)
       elif self.name == "SiC":
         rho = inverse_model(temperature, A, B)
 
@@ -100,17 +112,16 @@ cp = 700 #my documentation says 670, internet says 730
 def R_tot(temp):
   return 1/(1/tungsten.R(temp) + 1/SiC.R(temp))
 
-#constant current power supply
-def CC(temp, current, step):
+def CC(temp, current, step): #maybe later can try writing this whole thing as one equation
   R = R_tot(temp)
   V = current*R
   P = R*(current**2)
   #T = np.sqrt(np.sqrt((P)/(sigma*e*A_s)))
   T = temp + step*(P - (temp**4)*sigma*e*SiC.SA())/(psi*cp*SiC.V())
+  print(T)
 
   return R,V,P,T
 
-#constant voltage power supply
 def CV(temp, voltage, step):
   R = R_tot(temp)
   I = voltage/R
@@ -120,74 +131,38 @@ def CV(temp, voltage, step):
   return R,V,P,T
 
 
-resistance = []
-voltage = []
-power = []
-temperature = []
-current = []
-times = []
-R_tungsten = []
-R_SiC = []
 
-#initalizing
-Ti = 300
-step = 0.1
-scale = 500
-time = 0
 
-#heating element properties (these are the ones i can changes with what i have right now)
-tungsten.outer
-tungsten.length
-SiC.length
+def loss(Ti, Tf, euler_step, params):
+  tungsten.outer = params[0]
+  tungsten.length = params[1]
+  SiC.length = params[2]
+  k = params[3]
+  l = params[4]
+  m = params[5]
 
-#current regime (since we need to start with low current then go to high, i thought arctan works very well)
-k = 4.5
-l = 0.025
-m = 10
-I = lambda x: k*(np.arctan(l*x - m)+np.pi/2)
+  time = 0
+  I = lambda x: k*(jnp.arctan(l*x - m)+jnp.pi/2)
+  T = Ti
 
-T = Ti
-while time < scale:
-  R_tungsten.append(tungsten.R(T))
-  R_SiC.append(SiC.R(T))
+  while T<Tf:
+    time += euler_step
+    T = CC(T, I(time), euler_step)[3]
+    
+  return time
 
-  R,V,P,T = CC(T,I(time),step)
+#tungsten = heater("W",0, 0.00005, 0.25)
+#SiC = heater("SiC", 0.01, 0.014, 0.02)
+#k = 4.5
+#l = 0.025
+#m = 10
+#300,1700, 0.1, [0.00005, 0.25, 0.02, 4.5, 0.025, 10]
 
-  resistance.append(R)
-  voltage.append(V)
-  power.append(P)
-  temperature.append(T)
-  times.append(time)
-  current.append(I(time))
+def test(params):
+    return loss(301, 1700, 0.1, params)
 
-  time += step
+gradient_fn = jax.grad(test)
+print("hmm")
+params = jnp.array([0.00005, 0.25, 0.02, 4.5, 0.025, 10])
+print(gradient_fn(params))
 
-fig, axs = plt.subplots(2,3,figsize=(15, 8))
-
-axs[0,0].plot(times, temperature)
-axs[0,0].set_xlabel("Time (s)")
-axs[0,0].set_ylabel("Temp (K)")
-
-axs[0,1].plot(times, resistance)
-axs[0,1].set_xlabel("Time (s)")
-axs[0,1].set_ylabel("Resistance (Ohm)")
-
-axs[1,0].plot(times, voltage)
-axs[1,0].set_xlabel("Time (s)")
-axs[1,0].set_ylabel("Voltage (V)")
-
-axs[1,1].plot(times, power)
-axs[1,1].set_xlabel("Time (s)")
-axs[1,1].set_ylabel("Power (W)")
-
-axs[1,2].plot(times, current)
-axs[1,2].set_xlabel("Time (s)")
-axs[1,2].set_ylabel("Current (A)")
-
-axs[0,2].plot(times, R_tungsten, label = "Tungsten Resistance")
-axs[0,2].plot(times, R_SiC, label = "SiC Resistance")
-axs[0,2].set_xlabel("Time (s)")
-axs[0,2].set_ylabel("Individual Resistance (R)")
-axs[0,2].legend(loc="upper right")
-
-plt.show()
