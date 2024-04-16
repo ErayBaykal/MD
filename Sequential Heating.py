@@ -9,8 +9,6 @@ from scipy.optimize import curve_fit
 import jax
 import jax.numpy as jnp
 
-
-
 fig, axs = plt.subplots(2)
 
 
@@ -74,82 +72,96 @@ axs[1].scatter(SiC_temp,SiC_rho)
 axs[1].set_ylabel('Rho SiC (Ohm-m)')
 axs[1].set_xlabel('Temperature (K)')
 
-class heater:
-  def __init__(self, name, inner, outer, length):
-      self.name = name
-      self.inner = inner
-      self.outer = outer
-      self.length = length
 
-  def CA(self):
-      return jnp.pi*(self.outer**2 - self.inner**2)/4
-
-  def SA(self):
-      return jnp.pi*self.outer*self.length
-
-  def V(self):
-      return self.CA()*self.length
-   
-  def R(self, temperature):
-      if self.name == "W":
-        rho = quadratic_model(temperature, C, D,E)
-      elif self.name == "SiC":
-        rho = inverse_model(temperature, A, B)
-
-      return rho*self.length/self.CA()
-
-
-tungsten = heater("W",0, 0.00005, 0.25)
-SiC = heater("SiC", 0.01, 0.014, 0.02)
-
-
-#basic heating model with only radiative loss - assumed surface area is that of SiC - SiC and tungsten assumed at the same temp
 sigma = 5.67e-8
 e = 0.9
 psi = 3210
 cp = 700 #my documentation says 670, internet says 730
+SiC_ID = 0.01
+SiC_OD = 0.014
 
-def R_tot(temp):
-  return 1/(1/tungsten.R(temp) + 1/SiC.R(temp))
+def CA(ID, OD):
+  return jnp.pi*(OD**2 - ID**2)/4
 
-def CC(temp, current, step): #maybe later can try writing this whole thing as one equation
-  R = R_tot(temp)
-  V = current*R
-  P = R*(current**2)
+def SA(OD, L):
+  return jnp.pi*OD*L
+
+def V(ID, OD, L):
+  return CA(ID, OD)*L
+
+def R(temperature, ID, OD, L, name):
+  if name == "W":
+    rho = quadratic_model(temperature, C, D,E)
+  elif name == "SiC":
+    rho = inverse_model(temperature, A, B)
+
+  return rho*L/CA(ID, OD)
+
+def R_tot(temp, W_OD, W_L, SiC_L):
+  return 1/(1/R(temp, 0, W_OD, W_L, "W") + 1/R(temp, SiC_ID, SiC_OD, SiC_L, "SiC"))
+
+
+#def CC(temp, current, step): #maybe later can try writing this whole thing as one equation
+#  R = R_tot(temp)
+#  V = current*R
+#  P = R*(current**2)
   #T = np.sqrt(np.sqrt((P)/(sigma*e*A_s)))
-  T = temp + step*(P - (temp**4)*sigma*e*SiC.SA())/(psi*cp*SiC.V())
-  print(T)
+#  T = temp + step*(P - (temp**4)*sigma*e*SiC.SA())/(psi*cp*SiC.V())
 
-  return R,V,P,T
-
-def CV(temp, voltage, step):
-  R = R_tot(temp)
-  I = voltage/R
-  P = R*(I**2)
-  T = temp + step*(P - (temp**4)*sigma*e*SiC.SA())/(psi*cp*SiC.V())
-
-  return R,V,P,T
+#  return R,V,P,T
 
 
+def euler(ti,T, current, step, W_OD, W_L, SiC_L): #maybe later can try writing this whole thing as one equation
+  SiC_Vol = V(SiC_ID, SiC_OD, SiC_L)
+  SiC_SA = SA(SiC_OD, SiC_L)
+  W_SA = SA(W_OD, W_L)
+  W_R = R(T, 0, W_OD, W_L, "W")
 
 
-def loss(Ti, Tf, euler_step, params):
-  tungsten.outer = params[0]
-  tungsten.length = params[1]
-  SiC.length = params[2]
-  k = params[3]
-  l = params[4]
-  m = params[5]
+  res = R_tot(T, W_OD, W_L, SiC_L)
+  voltage = current*res
+  pow = res*(current**2)
+  tf = ti + step*(psi*cp*SiC_Vol/(pow - (T**4)*sigma*e*SiC_SA))
+
+  Pd = W_R*current/W_SA
+
+  return res,voltage,pow,tf
+
+
+def loss(params):
+  W_OD = params[0]
+  W_L = params[1]
+  SiC_L = params[2]
+  lam = params[3]
+  z = params[4]
 
   time = 0
-  I = lambda x: k*(jnp.arctan(l*x - m)+jnp.pi/2)
-  T = Ti
+  
+  #I = lambda x: k*(jnp.arctan(l*x - m)+jnp.pi/2)
+  I = 30
+  T = 300
+  Tf = 1800
+  temp_step = 10
+  bad = 0
 
   while T<Tf:
-    time += euler_step
-    T = CC(T, I(time), euler_step)[3]
+    T += temp_step
+    _,_,Pd,time = euler(time, T, I, temp_step, W_OD, W_L, SiC_L)
     
-  return time
+    if Pd > bad:
+      bad = Pd
+
+    print("Max Power Density: ", int(bad))
+    print("SiC Length: ",float(SiC_L.item()))
+    print("Tungsten Length: ",float(W_L.item()))
+    print("Tungsten Thickness: ", float(W_OD.item()))
+    print("Time: ", int(time))
+    print("Temp: ", int(T))
+    print("Lambda: ", int(lam))
+    print("z: ", int(z))
+    print("")
+
+  return time + lam*(bad-500000) + (time - z**2)**2
 
 #tungsten = heater("W",0, 0.00005, 0.25)
 #SiC = heater("SiC", 0.01, 0.014, 0.02)
@@ -158,11 +170,27 @@ def loss(Ti, Tf, euler_step, params):
 #m = 10
 #300,1700, 0.1, [0.00005, 0.25, 0.02, 4.5, 0.025, 10]
 
-def test(params):
-    return loss(301, 1700, 0.1, params)
+params = jnp.array([0.0005, 0.4, 0.02, 10, 0])
+gradient = jax.grad(loss)
 
-gradient_fn = jax.grad(test)
-print("hmm")
-params = jnp.array([0.00005, 0.25, 0.02, 4.5, 0.025, 10])
-print(gradient_fn(params))
+plot = []
+x = list(range(1, 11))
 
+def optimize(params, LR=0.00001, N_STEPS=10):
+  for _ in range(N_STEPS):
+    
+    grads = gradient(params)
+    plot.append(float(grads[1].item()))
+    #params = params - (LR * grads)
+
+    params = params[0:-1] - (LR * grads[0:-1])
+    params = jnp.concatenate([params, jnp.array([params[-1] + (LR * grads[-1])])])
+    #params = jnp.clip(params, jnp.array([0.00005, 0.1, 0.01, 0 ]), jnp.array([0.002, 10, 0.03, 1000]))
+    params = jnp.clip(params, jnp.array([0, 0.1, 0.01, 0 , 0]))
+
+  return params
+
+optimize(params)
+
+plt.plot(x,plot)
+plt.show()
