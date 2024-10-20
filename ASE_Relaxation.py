@@ -1,27 +1,21 @@
+from mace.calculators import mace_mp
+from ase import build
 import numpy as np
-import scipy
-import matplotlib.pyplot as plt
-
 from ase.build import bulk
 from ase.visualize import view
+from ase.optimize import BFGS
 
-from psiflow.geometry import Geometry
-from psiflow.sampling import optimize
-from psiflow.hamiltonians import MACEHamiltonian
+calc = mace_mp(model="/Users/eraybaykal/Downloads/MACE_MPtrj_2022.9.model", dispersion=False, default_dtype="float64", device='cpu')
 
-
-lattice = bulk('Cu', 'fcc', a=3.6, cubic=True)
+lattice = bulk('Cu', 'fcc', a=1.0, cubic=True)
 view(lattice)
 
-geometry = Geometry.from_atoms(lattice)
+lattice.calc = calc
+print(lattice.get_potential_energy())
 
-mace = MACEHamiltonian.mace_mp0()
+dyn = BFGS(lattice)
+dyn.run(fmax=0.05)
 
-minimum_geometry = optimize(
-    geometry,
-    mace,
-    ftol=1e-4,
-)                   
+print(lattice.get_potential_energy())
+view(lattice)
 
-energy = mace.compute(geometry, 'energy')
-minimum_energy = mace.compute(minimum_geometry, 'energy')
